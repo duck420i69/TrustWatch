@@ -1,12 +1,27 @@
-"""The two monitoring modes: a one-shot access snapshot, and the camera loop."""
+"""The monitoring modes.
+
+- ``snap``        — one access capture (webcam + screenshot + activity), meant to
+                    be fired on login/unlock.
+- ``camera_loop`` — a motion-detecting security camera.
+- ``guard_loop``  — a persistent watcher that captures on start (turn-on), on
+                    resume from sleep, while someone is actively interacting, and
+                    when USB devices are plugged in or removed.
+
+"What the person is doing" is recorded as a screenshot plus the foreground
+app/window name. TrustWatch never records keystrokes or typed content — see
+``trustwatch/activity.py``.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
-from .camera import Camera, CameraError, capture_single
+from . import activity, screen
+from .camera import CameraError, capture_single
 from .config import Config
 from .motion import MotionDetector
 from .notifier import Notifier
@@ -15,34 +30,91 @@ from .storage import log_event, snapshot_path
 log = logging.getLogger("trustwatch.monitor")
 
 
-def snap(cfg: Config, kind: str = "access", notify: bool = True) -> dict:
-    """Capture one frame, log it, and alert. Meant to be fired on login/unlock.
+def _capture_screenshot(cfg: Config, kind: str) -> Optional[Path]:
+    """Grab a screenshot if enabled; return its path, or None on any failure."""
+    if not cfg.screen.enabled:
+        return None
+    path = snapshot_path(cfg, f"{kind}-screen").with_suffix(".jpg")
+    try:
+        screen.capture_screen(
+            path, monitor=cfg.screen.monitor, max_width=cfg.screen.max_width
+        )
+        return path
+    except screen.ScreenCaptureError as exc:
+        log.debug("Screenshot skipped: %s", exc)
+        return None
 
-    Returns the logged event record.
+
+def _capture(cfg: Config, kind: str) -> dict:
+    """Capture one event: webcam photo + screenshot + foreground activity.
+
+    Always returns a record describing what was captured. A failure of any single
+    source (camera covered, no display, headless) is recorded but never raises —
+    a blocked camera or screen is itself worth knowing about.
     """
-    cfg.ensure_dirs()
-    path = snapshot_path(cfg, kind)
     when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # Webcam photo of who is at the machine.
+    photo: Optional[Path] = snapshot_path(cfg, kind)
+    camera_ok = True
     try:
-        capture_single(cfg.camera, path)
-        image = path
-        message = f"Device accessed at {when}. Snapshot saved."
+        capture_single(cfg.camera, photo)
     except CameraError as exc:
-        # Still record the access even if the camera is blocked/unavailable —
-        # a covered or disabled camera is itself worth knowing about.
-        image = None
-        message = f"Device accessed at {when}, but camera capture failed: {exc}"
-        log.warning(message)
+        camera_ok = False
+        photo = None
+        log.warning("Camera capture failed for %s: %s", kind, exc)
 
-    record = log_event(cfg, kind, message, image_path=image)
+    # Screenshot of what is on screen.
+    shot = _capture_screenshot(cfg, kind)
 
+    # Which application is in focus (never what is typed into it).
+    win = None
+    try:
+        win = activity.active_window()
+    except Exception as exc:  # noqa: BLE001 - activity must never crash a capture
+        log.debug("active_window failed: %s", exc)
+
+    extra = {
+        "camera_ok": camera_ok,
+        "screenshot": str(shot) if shot else None,
+        "app": (win or {}).get("app"),
+        "window_title": (win or {}).get("title"),
+    }
+
+    parts = [f"Event '{kind}' at {when}."]
+    parts.append("Webcam photo saved." if camera_ok else "Webcam capture FAILED.")
+    if shot:
+        parts.append("Screenshot saved.")
+    if win and (win.get("app") or win.get("title")):
+        parts.append(f"Foreground: {win.get('app') or '?'} — {win.get('title') or ''}".strip())
+    message = " ".join(parts)
+
+    record = log_event(cfg, kind, message, image_path=photo, extra=extra)
+    record["_photo"] = photo
+    record["_screenshot"] = shot
+    return record
+
+
+def _notify_capture(cfg: Config, title: str, record: dict) -> None:
+    """Send a capture record out through the notifier (webcam photo attached)."""
+    body = record["message"]
+    shot = record.get("_screenshot")
+    if shot:
+        body += f"\nScreenshot: {shot}"
+    Notifier(cfg.notifier).notify(
+        title=title, body=body, image_path=record.get("_photo")
+    )
+
+
+def snap(cfg: Config, kind: str = "access", notify: bool = True) -> dict:
+    """Capture one access event (webcam + screenshot + activity), log it, alert.
+
+    Meant to be fired on login/unlock. Returns the logged event record.
+    """
+    cfg.ensure_dirs()
+    record = _capture(cfg, kind)
     if notify:
-        Notifier(cfg.notifier).notify(
-            title="TrustWatch: device accessed",
-            body=message,
-            image_path=image,
-        )
+        _notify_capture(cfg, "TrustWatch: device accessed", record)
     return record
 
 
@@ -64,6 +136,8 @@ def camera_loop(cfg: Config, kind: str = "motion", notify: bool = True) -> None:
     log_event(cfg, "camera_start", "Security camera mode started.")
 
     try:
+        from .camera import Camera
+
         with Camera(cfg.camera) as cam:
             while True:
                 try:
@@ -74,10 +148,7 @@ def camera_loop(cfg: Config, kind: str = "motion", notify: bool = True) -> None:
                     continue
 
                 area = detector.update(frame)
-                if detector.is_motion(area):
-                    streak += 1
-                else:
-                    streak = 0
+                streak = streak + 1 if detector.is_motion(area) else 0
 
                 now = time.monotonic()
                 ready = (now - last_alert) >= mcfg.cooldown_seconds
@@ -106,3 +177,89 @@ def camera_loop(cfg: Config, kind: str = "motion", notify: bool = True) -> None:
     except KeyboardInterrupt:
         log.info("Stopping security camera.")
         log_event(cfg, "camera_stop", "Security camera mode stopped.")
+
+
+def guard_loop(cfg: Config, notify: bool = True) -> None:
+    """Persistent watcher: capture on turn-on, on wake, on interaction, on USB change.
+
+    Runs until interrupted (Ctrl-C). Because userspace code cannot execute while
+    the laptop is physically suspended, "running during sleep" means this loop
+    detects the resume (a poll gap far larger than the interval) and captures the
+    instant the machine wakes. Pair it with the OS autostart in ``install/`` so it
+    restarts on boot/login and keeps watching across sleep cycles.
+    """
+    cfg.ensure_dirs()
+    g = cfg.guard
+    title = "TrustWatch: activity"
+
+    log.info("Guard mode started (poll=%ss). Press Ctrl-C to stop.", g.poll_interval)
+    log_event(cfg, "guard_start", "Guard mode started.")
+
+    if g.capture_on_start:
+        rec = _capture(cfg, "startup")
+        if notify:
+            _notify_capture(cfg, "TrustWatch: device turned on / guard started", rec)
+
+    known_usb = activity.list_usb_devices() if g.capture_on_usb_change else set()
+    last_interaction_capture = 0.0
+    last_app_title: Optional[str] = None
+    last_wall = time.time()
+
+    try:
+        while True:
+            time.sleep(g.poll_interval)
+            now_mono = time.monotonic()
+            now_wall = time.time()
+
+            # --- resume-from-sleep detection ---------------------------------
+            gap = now_wall - last_wall
+            last_wall = now_wall
+            if g.capture_on_wake and gap > (g.poll_interval + g.wake_gap_seconds):
+                log.info("Resume from sleep detected (gap %.0fs).", gap)
+                rec = _capture(cfg, "wake")
+                if notify:
+                    _notify_capture(cfg, "TrustWatch: woke from sleep", rec)
+
+            # --- USB plug/unplug detection -----------------------------------
+            if g.capture_on_usb_change:
+                current = activity.list_usb_devices()
+                added = current - known_usb
+                removed = known_usb - current
+                if added or removed:
+                    known_usb = current
+                    detail = []
+                    if added:
+                        detail.append(f"added: {', '.join(sorted(added))}")
+                    if removed:
+                        detail.append(f"removed: {', '.join(sorted(removed))}")
+                    log.info("USB change (%s).", "; ".join(detail))
+                    rec = _capture(cfg, "usb")
+                    rec["message"] += " USB change — " + "; ".join(detail)
+                    if notify:
+                        _notify_capture(cfg, "TrustWatch: USB device change", rec)
+
+            # --- active-interaction detection --------------------------------
+            idle = activity.seconds_since_last_input()
+            interacting = idle is not None and idle <= g.interaction_idle_threshold
+            if g.capture_on_interaction and interacting:
+                if (now_mono - last_interaction_capture) >= g.interaction_cooldown:
+                    last_interaction_capture = now_mono
+                    rec = _capture(cfg, "interaction")
+                    if notify:
+                        _notify_capture(cfg, "TrustWatch: someone is using the laptop", rec)
+
+            # --- lightweight activity timeline -------------------------------
+            if g.log_activity:
+                win = activity.active_window()
+                if win:
+                    sig = f"{win.get('app')}|{win.get('title')}"
+                    if sig != last_app_title:
+                        last_app_title = sig
+                        log_event(
+                            cfg, "activity",
+                            f"Foreground: {win.get('app') or '?'} — {win.get('title') or ''}".strip(),
+                            extra={"app": win.get("app"), "window_title": win.get("title")},
+                        )
+    except KeyboardInterrupt:
+        log.info("Stopping guard mode.")
+        log_event(cfg, "guard_stop", "Guard mode stopped.")

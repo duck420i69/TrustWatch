@@ -30,3 +30,19 @@ Use Task Scheduler to fire `trustwatch snap` at logon and at workstation unlock.
 
 The first capture will prompt for camera access (Settings → Privacy & security
 → Camera → let desktop apps use the camera).
+
+## Persistent guard mode (recommended)
+
+For the always-on watcher (captures on start, wake, interaction, and USB
+change), create a second task `TrustWatch Guard`:
+
+- **Trigger:** *At log on* (your user).
+- **Action:** the `trustwatch` path, arguments
+  `--config "%USERPROFILE%\.trustwatch\config.json" guard`.
+- **Settings tab:** check *If the task fails, restart every* 1 minute, and set
+  *If the task is already running* to *Do not start a new instance*.
+- **Conditions tab:** uncheck *Stop if the computer switches to battery power*
+  and *Start only on AC power* so it keeps running unplugged.
+
+Guard detects resume-from-sleep itself and captures on wake; the "On workstation
+unlock" trigger from the `snap` task above is a good complement.

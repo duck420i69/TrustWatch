@@ -46,6 +46,38 @@ Save as `~/.local/bin/trustwatch-unlock-watch.sh`, `chmod +x` it, and add it to
 your desktop's autostart. (GNOME uses `org.gnome.ScreenSaver`; adjust the
 interface to match your environment — check with `dbus-monitor --session`.)
 
+## C. Persistent guard mode (recommended)
+
+Rather than one-shot snapshots, run the always-on `guard` watcher (captures on
+start, wake, interaction, and USB change). Create
+`~/.config/systemd/user/trustwatch-guard.service`:
+
+```ini
+[Unit]
+Description=TrustWatch guard
+After=graphical-session.target
+
+[Service]
+ExecStart=/FULL/PATH/TO/trustwatch --config %h/.trustwatch/config.json guard
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now trustwatch-guard.service
+```
+
+`Restart=always` brings it back after sleep/resume or if it crashes. For it to
+run even while you're logged out, enable lingering: `loginctl enable-linger $USER`.
+
+Idle-time and active-window detection on X11 use the small tools `xprintidle`
+and `xdotool` (e.g. `sudo apt install xprintidle xdotool`). On Wayland these
+signals may be unavailable; guard still captures on start, wake, and USB change.
+
 ## Camera permission
 
 On Linux the webcam is `/dev/video0`; make sure your user is in the `video`

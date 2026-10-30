@@ -5,6 +5,11 @@ suspect someone is using your machine while you're away, TrustWatch can:
 
 - 📸 **Capture a snapshot of whoever accesses the machine** the moment it's
   logged into or unlocked, and log the event with a timestamp.
+- 🕵️ **See what they do** — alongside the webcam photo, guard mode grabs a
+  **screenshot** and records the **foreground app/window** and **USB plug/unplug**
+  events, so you get a timeline of activity (never keystrokes — see below).
+- 🖥️ **Keep watching across sleep** — guard mode captures the instant the laptop
+  wakes/resumes, and the autostart setup restarts it on boot/login.
 - 🎥 **Act as a motion-detecting security camera** — watch the webcam and save
   frames + alert you only when something actually moves.
 - 🔔 **Send you a notification** on your phone or inbox (Telegram, email, or any
@@ -12,6 +17,11 @@ suspect someone is using your machine while you're away, TrustWatch can:
   once the laptop walks away.
 - 🗂️ Keep everything **on your own machine** in a folder you control. Nothing is
   uploaded anywhere unless *you* configure a notification channel.
+
+> **No keylogging.** TrustWatch records *that* someone is interacting and *which
+> app* is in focus, plus screenshots — it never captures keystrokes, typed text,
+> passwords, or clipboard contents. That line is intentional: it keeps this a
+> tool for catching tampering with your own device, not for spying on input.
 
 It runs headless (no window) so it keeps watching quietly in the background —
 the same reason a security camera isn't a flashing sign.
@@ -59,7 +69,10 @@ cp config.example.json ~/.trustwatch/config.json   # mkdir -p ~/.trustwatch firs
 trustwatch --config ~/.trustwatch/config.json snap          # take one photo now
 trustwatch --config ~/.trustwatch/config.json test-notify   # fire a test alert
 
-# 3. Run the security camera (Ctrl-C to stop).
+# 3. Run the persistent guard (captures on turn-on, wake, interaction, USB).
+trustwatch --config ~/.trustwatch/config.json guard
+
+#    ...or the motion-detecting security camera (Ctrl-C to stop either).
 trustwatch --config ~/.trustwatch/config.json camera
 
 # 4. Review what happened.
@@ -73,14 +86,46 @@ only, data in `~/.trustwatch`).
 
 | Command | What it does |
 |---|---|
-| `snap` | Capture **one** access snapshot now, log it, and alert. Wire this to your OS login/unlock (see `install/`). Add `--kind login`/`--kind unlock` to label it. |
+| `snap` | Capture **one** access event now (webcam photo + screenshot + foreground app), log it, and alert. Wire this to your OS login/unlock (see `install/`). Add `--kind login`/`--kind unlock` to label it. |
+| `guard` | **Persistent watcher.** Captures on start (turn-on), on **wake from sleep**, while **someone is interacting**, and on **USB plug/unplug**; logs an activity timeline. Runs until `Ctrl-C`. |
 | `camera` | Run the motion-detecting security camera loop until `Ctrl-C`. |
 | `log [-n N]` | Print the most recent events. |
 | `test-notify` | Send a test alert through every configured channel. |
 | `show-config` | Print the effective configuration (handy for debugging). |
 
-Add `--no-notify` to `snap`/`camera` to capture and log silently without sending
-alerts.
+Add `--no-notify` to `snap`/`camera`/`guard` to capture and log silently without
+sending alerts.
+
+## Guard mode — capture interaction, activity, and wake-from-sleep
+
+`trustwatch guard` is the "someone is tampering with my laptop" mode. It runs in
+the background and captures a full event (webcam photo + screenshot + foreground
+app) when any of these happen:
+
+- **Turn-on / start** — the moment guard launches (wire it to boot/login below).
+- **Wake from sleep** — userspace can't run while the laptop is physically
+  suspended, so guard detects the *resume* (a poll gap far larger than its
+  interval) and captures the instant the lid opens. Combined with the autostart
+  setup, it keeps watching across sleep cycles.
+- **Interaction** — when the OS idle timer shows someone is actively using the
+  machine (rate-limited by `interaction_cooldown` so you get periodic snapshots,
+  not a flood).
+- **USB change** — a device plugged in or removed (a common tamper signal).
+
+It also logs a lightweight **activity timeline** (which app/window comes to the
+foreground). All tunables live in the `guard` and `screen` sections of the
+config.
+
+### Keep it running across sleep / reboots
+
+Run `guard` as a persistent service that restarts on login and resumes after
+sleep — the same `install/` guides cover this:
+
+- **macOS** → add `KeepAlive` to the LaunchAgent and use the `guard` subcommand.
+- **Linux** → a `systemd --user` service with `Restart=always`.
+- **Windows** → a Task Scheduler task "At log on" + "On workstation unlock".
+
+See [`install/`](install/) for the exact service definitions.
 
 ## Capturing who logs in (the anti-tamper use case)
 
@@ -120,11 +165,14 @@ TrustWatch from capturing or alerting through the others.
 ```
 ~/.trustwatch/
 ├── config.json          # your settings (gitignored; keep your secrets here)
-├── events.log           # one JSON line per event
-└── snapshots/           # 20260101-091500_login.jpg, ...
+├── events.log           # one JSON line per event (incl. app/window + USB notes)
+└── snapshots/           # 20260101-091500_login.jpg       (webcam)
+                         # 20260101-091500_login-screen.jpg (screenshot)
 ```
 
-Review events any time with `trustwatch log`. Delete the folder to wipe history.
+Each event in `events.log` records the webcam photo path, the screenshot path,
+and the foreground app/window at that moment. Review events any time with
+`trustwatch log`. Delete the folder to wipe history.
 
 ## Tuning motion detection
 

@@ -9,7 +9,7 @@ import sys
 
 from . import __version__
 from .config import Config, load_config
-from .monitor import camera_loop, snap
+from .monitor import camera_loop, guard_loop, snap
 from .notifier import Notifier
 from .storage import read_events
 
@@ -45,6 +45,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "camera", help="Run as a motion-detecting security camera until Ctrl-C."
     )
     s_cam.add_argument(
+        "--no-notify", action="store_true", help="Log/save only, do not send alerts."
+    )
+
+    s_guard = sub.add_parser(
+        "guard",
+        help=(
+            "Persistent watcher: capture on turn-on, on wake from sleep, while "
+            "someone is interacting, and on USB plug/unplug. Runs until Ctrl-C."
+        ),
+    )
+    s_guard.add_argument(
         "--no-notify", action="store_true", help="Log/save only, do not send alerts."
     )
 
@@ -91,6 +102,10 @@ def main(argv=None) -> int:
 
     if args.command == "camera":
         camera_loop(cfg, notify=not args.no_notify)
+        return 0
+
+    if args.command == "guard":
+        guard_loop(cfg, notify=not args.no_notify)
         return 0
 
     if args.command == "log":

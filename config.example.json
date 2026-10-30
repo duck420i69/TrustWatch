@@ -16,6 +16,24 @@
     "poll_interval": 0.1
   },
 
+  "screen": {
+    "enabled": true,
+    "monitor": 0,
+    "max_width": 1280
+  },
+
+  "guard": {
+    "poll_interval": 2.0,
+    "capture_on_start": true,
+    "capture_on_wake": true,
+    "wake_gap_seconds": 30.0,
+    "capture_on_interaction": true,
+    "interaction_idle_threshold": 3.0,
+    "interaction_cooldown": 90.0,
+    "capture_on_usb_change": true,
+    "log_activity": true
+  },
+
   "notifier": {
     "desktop": true,
 

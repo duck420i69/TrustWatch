@@ -11,11 +11,14 @@ requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
     "opencv-python>=4.8",
+    "mss>=9.0",
     "requests>=2.28",
 ]
 
 [project.optional-dependencies]
 desktop = ["plyer>=2.1"]
+screenshots = ["Pillow>=10.0"]
+winproc = ["psutil>=5.9"]
 yaml = ["pyyaml>=6.0"]
 
 [project.scripts]

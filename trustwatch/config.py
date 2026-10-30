@@ -60,11 +60,33 @@ class MotionConfig:
 
 
 @dataclass
+class ScreenConfig:
+    enabled: bool = True           # also grab a screenshot ("what they're doing")
+    monitor: int = 0               # 0 = whole virtual desktop; >=1 a single display
+    max_width: int = 1280          # downscale wide screenshots to keep files small
+
+
+@dataclass
+class GuardConfig:
+    poll_interval: float = 2.0            # seconds between checks while guarding
+    capture_on_start: bool = True         # snapshot when guard starts (i.e. turn-on)
+    capture_on_wake: bool = True          # snapshot when the machine resumes from sleep
+    wake_gap_seconds: float = 30.0        # a poll gap larger than this => it slept
+    capture_on_interaction: bool = True   # snapshot when someone is actively using it
+    interaction_idle_threshold: float = 3.0  # idle under this => a person is present
+    interaction_cooldown: float = 90.0    # min seconds between interaction snapshots
+    capture_on_usb_change: bool = True    # snapshot when USB devices are plugged/removed
+    log_activity: bool = True             # log foreground app/window changes
+
+
+@dataclass
 class Config:
     data_dir: str = str(DEFAULT_DATA_DIR)
     notifier: NotifierConfig = field(default_factory=NotifierConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     motion: MotionConfig = field(default_factory=MotionConfig)
+    screen: ScreenConfig = field(default_factory=ScreenConfig)
+    guard: GuardConfig = field(default_factory=GuardConfig)
 
     @property
     def snapshot_dir(self) -> Path:
@@ -116,6 +138,8 @@ def load_config(path: Optional[str]) -> Config:
         notifier=_merge(NotifierConfig, raw.get("notifier")),
         camera=_merge(CameraConfig, raw.get("camera")),
         motion=_merge(MotionConfig, raw.get("motion")),
+        screen=_merge(ScreenConfig, raw.get("screen")),
+        guard=_merge(GuardConfig, raw.get("guard")),
     )
 
     # Environment variables override secrets so you need not keep them in a file.
