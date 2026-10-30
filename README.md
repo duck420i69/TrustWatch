@@ -205,14 +205,45 @@ projects may fit better (verify current status/licenses yourself):
 - **[usbkill](https://github.com/hephaest0s/usbkill)** — triggers a lockdown
   when USB devices are plugged/unplugged (anti-forensic / anti-tamper).
 
+## Threat model & hardening
+
+TrustWatch is a **tripwire with a camera**, not a vault. It's effective against a
+casual snooper who doesn't know it's there. Anyone with physical access, admin
+rights, and some knowledge can defeat a software monitor — understand how, so you
+can pair it with the right hardening.
+
+**How a software monitor gets bypassed (and the fix):**
+
+| Attack | Why it works | Hardening |
+|---|---|---|
+| **Boot another OS / USB / recovery mode** | TrustWatch only runs after *your* OS boots and logs in; a different boot never starts it. | Firmware/BIOS password; disable USB/external boot. |
+| **Pull the disk / mount offline** | With your OS not running, they read or delete `~/.trustwatch/` (snapshots, logs) and your config, or edit the code — no permission checks apply. | **Full-disk encryption** (FileVault / BitLocker / LUKS) — the single biggest hardener. |
+| **Kill the process / disable autostart** | A background job has no special privilege; admin/root outranks it, and it runs as *you*. | Separate admin account; don't hand out your password. |
+| **Cover the webcam / cut the network** | Black photos; alerts can't leave the machine, and queued captures die if the disk is then wiped. | Off-device upload *first* (below); treat "camera capture failed" events as a signal. |
+| **Timing** | Physical access = they control the clock: cut network, act, wipe — faster than evidence escapes. | Immediate off-device alerts; a separate guard device. |
+
+**What actually raises the bar** — the goal is to get evidence *off the device
+before it can be suppressed*, and make the OS hard to bypass:
+
+1. **Full-disk encryption** — defeats the offline disk attack and offline code edits.
+2. **Firmware password + no external boot** — closes the "boot something else" bypass.
+3. **Immediate off-device alerts** (Telegram / webhook) — the photo reaches your
+   phone before a local wipe helps them. This is why TrustWatch favors phone-
+   reachable channels over a desktop pop-up.
+4. **A separate guard device** — the [Haven](https://guardianproject.info/apps/org.havenapp.main/)
+   approach (a spare phone watching your laptop) can't be logged into or wiped as
+   part of tampering with the laptop, so it's more robust for a persistent problem.
+5. **Remote/append-only logging** — ship events to a server they don't control, so
+   deleting the local log doesn't erase the trail.
+
 ## Limitations & honesty
 
 - Login/unlock capture depends on the OS hook you set up — TrustWatch provides
   the capture, your OS provides the trigger. The guides in `install/` cover the
   common cases.
 - A determined, technical attacker with physical access and time can find and
-  disable almost any software monitor. TrustWatch raises the bar and gives you
-  evidence/alerts; it is not tamper-*proof*.
+  disable almost any software monitor (see the threat model above). TrustWatch
+  raises the bar and gives you evidence/alerts; it is not tamper-*proof*.
 - Face *recognition* (naming who it is) is intentionally **not** included — it
   captures the image and leaves identification to you.
 
