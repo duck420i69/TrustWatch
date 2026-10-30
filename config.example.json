@@ -1,0 +1,34 @@
+{
+  "data_dir": "~/.trustwatch",
+
+  "camera": {
+    "device_index": 0,
+    "warmup_frames": 5,
+    "width": 0,
+    "height": 0
+  },
+
+  "motion": {
+    "min_area": 1500,
+    "sensitivity": 25,
+    "cooldown_seconds": 20,
+    "consecutive_frames": 2,
+    "poll_interval": 0.1
+  },
+
+  "notifier": {
+    "desktop": true,
+
+    "telegram_token": "",
+    "telegram_chat_id": "",
+
+    "email_enabled": false,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "smtp_user": "you@example.com",
+    "smtp_password": "",
+    "email_to": "you@example.com",
+
+    "webhook_url": ""
+  }
+}

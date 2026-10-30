@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trustwatch"
+version = "0.1.0"
+description = "Local intrusion and tamper monitor for your own laptop."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+    "opencv-python>=4.8",
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+desktop = ["plyer>=2.1"]
+yaml = ["pyyaml>=6.0"]
+
+[project.scripts]
+trustwatch = "trustwatch.cli:main"
+
+[tool.setuptools]
+packages = ["trustwatch"]

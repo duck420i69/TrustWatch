@@ -1,0 +1,21 @@
+# Your real config holds secrets (tokens, SMTP passwords) — never commit it.
+config.json
+config.yaml
+config.yml
+
+# Captured data stays local.
+.trustwatch/
+snapshots/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
