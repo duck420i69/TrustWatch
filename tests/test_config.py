@@ -93,3 +93,30 @@ def test_env_vars_fall_back_to_file_value(tmp_path, monkeypatch):
     monkeypatch.delenv("TRUSTWATCH_TELEGRAM_TOKEN", raising=False)
     cfg = load_config(str(p))
     assert cfg.notifier.telegram_token == "keep-me"
+
+
+def test_to_redacted_dict_masks_secrets():
+    """show-config must never print the token, SMTP password, or webhook URL."""
+    cfg = Config(
+        notifier=NotifierConfig(
+            telegram_token="SECRET-TOKEN",
+            telegram_chat_id="12345",
+            smtp_password="SECRET-PW",
+            webhook_url="https://hooks.example/SECRET",
+        )
+    )
+    d = cfg.to_redacted_dict()
+    assert d["notifier"]["telegram_token"] == "***set (hidden)***"
+    assert d["notifier"]["smtp_password"] == "***set (hidden)***"
+    assert d["notifier"]["webhook_url"] == "***set (hidden)***"
+    # Non-secret identifiers stay visible so the command is still useful.
+    assert d["notifier"]["telegram_chat_id"] == "12345"
+
+    # Serialized output contains none of the raw secret values.
+    blob = json.dumps(d)
+    assert "SECRET-TOKEN" not in blob
+    assert "SECRET-PW" not in blob
+    assert "hooks.example/SECRET" not in blob
+
+    # Empty secrets are left empty (not masked), so you can tell they're unset.
+    assert Config().to_redacted_dict()["notifier"]["telegram_token"] == ""

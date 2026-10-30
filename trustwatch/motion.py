@@ -42,9 +42,10 @@ class MotionDetector:
             self._ref = prepped.astype("float")
             return 0
 
-        # Blend the reference slowly so lighting drift doesn't cause false
-        # positives, while a person moving still stands out sharply.
-        cv2.accumulateWeighted(prepped, self._ref, 0.5)
+        # Blend the reference slowly so gradual lighting drift is absorbed
+        # (few false positives) while a person who briefly pauses still stands
+        # out instead of melting into the background within a frame or two.
+        cv2.accumulateWeighted(prepped, self._ref, 0.15)
         ref_uint8 = cv2.convertScaleAbs(self._ref)
 
         delta = cv2.absdiff(prepped, ref_uint8)

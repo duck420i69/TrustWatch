@@ -126,3 +126,38 @@ def test_email_channel_does_not_hit_network(monkeypatch):
     n = Notifier(cfg)
     # Should complete without raising and without a real connection.
     n.notify("title", "body")
+
+
+def test_scrub_removes_secret_substrings():
+    from trustwatch.notifier import _scrub
+
+    msg = "HTTPError at https://api.telegram.org/botABC123TOKEN/sendPhoto"
+    out = _scrub(msg, "ABC123TOKEN")
+    assert "ABC123TOKEN" not in out
+    assert "<redacted>" in out
+    # Empty secrets are ignored (no spurious replacement).
+    assert _scrub("plain text", "") == "plain text"
+
+
+def test_telegram_http_error_scrubs_token(monkeypatch):
+    """A Telegram HTTP error must not leak the bot token (it's in the URL)."""
+    import sys
+    import types
+
+    class _FakeResp:
+        def raise_for_status(self):
+            raise RuntimeError(
+                "500 Server Error: url: "
+                "https://api.telegram.org/botTOKEN123/sendMessage"
+            )
+
+    fake_requests = types.SimpleNamespace(post=lambda *a, **k: _FakeResp())
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+
+    n = Notifier(NotifierConfig(telegram_token="TOKEN123", telegram_chat_id="1"))
+    with pytest.raises(RuntimeError) as excinfo:
+        n._telegram("title", "body", None)
+
+    text = str(excinfo.value)
+    assert "TOKEN123" not in text
+    assert "<redacted>" in text

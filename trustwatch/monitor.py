@@ -45,12 +45,23 @@ def _capture_screenshot(cfg: Config, kind: str) -> Optional[Path]:
         return None
 
 
-def _capture(cfg: Config, kind: str) -> dict:
+def _capture(
+    cfg: Config,
+    kind: str,
+    note: Optional[str] = None,
+    extra_fields: Optional[dict] = None,
+) -> dict:
     """Capture one event: webcam photo + screenshot + foreground activity.
 
     Always returns a record describing what was captured. A failure of any single
     source (camera covered, no display, headless) is recorded but never raises —
     a blocked camera or screen is itself worth knowing about.
+
+    Args:
+        note: Extra text appended to the persisted event message (e.g. which USB
+            devices changed), so the detail survives in ``events.log``.
+        extra_fields: Additional structured fields merged into the event's
+            ``extra`` dict.
     """
     when = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -80,6 +91,8 @@ def _capture(cfg: Config, kind: str) -> dict:
         "app": (win or {}).get("app"),
         "window_title": (win or {}).get("title"),
     }
+    if extra_fields:
+        extra.update(extra_fields)
 
     parts = [f"Event '{kind}' at {when}."]
     parts.append("Webcam photo saved." if camera_ok else "Webcam capture FAILED.")
@@ -87,6 +100,8 @@ def _capture(cfg: Config, kind: str) -> dict:
         parts.append("Screenshot saved.")
     if win and (win.get("app") or win.get("title")):
         parts.append(f"Foreground: {win.get('app') or '?'} — {win.get('title') or ''}".strip())
+    if note:
+        parts.append(note)
     message = " ".join(parts)
 
     record = log_event(cfg, kind, message, image_path=photo, extra=extra)
@@ -174,9 +189,115 @@ def camera_loop(cfg: Config, kind: str = "motion", notify: bool = True) -> None:
                         )
 
                 time.sleep(mcfg.poll_interval)
+    except CameraError as exc:
+        # Raised when the camera can't be opened at all (bad index, in use, no
+        # permission). Report cleanly instead of dying with a traceback.
+        msg = f"Cannot start security camera: {exc}"
+        log.error(msg)
+        log_event(cfg, "camera_error", msg)
+        if notify:
+            Notifier(cfg.notifier).notify(
+                title="TrustWatch: camera unavailable", body=msg
+            )
     except KeyboardInterrupt:
         log.info("Stopping security camera.")
         log_event(cfg, "camera_stop", "Security camera mode stopped.")
+
+
+class _GuardState:
+    """Mutable state carried across guard iterations (see :func:`_guard_tick`)."""
+
+    def __init__(self, cfg: Config):
+        self.known_usb = (
+            activity.list_usb_devices() if cfg.guard.capture_on_usb_change else set()
+        )
+        self.last_interaction_capture = 0.0
+        self.last_app_title: Optional[str] = None
+        # Set last, so the first tick's gap is ~poll_interval (no false wake).
+        self.last_wall = time.time()
+
+
+def _guard_tick(
+    cfg: Config,
+    state: _GuardState,
+    notify: bool = True,
+    now_wall: Optional[float] = None,
+    now_mono: Optional[float] = None,
+) -> list:
+    """Run one guard iteration against `state`; return the kinds captured.
+
+    Clocks are injectable for testing: ``now_wall`` (wall clock, for suspend
+    detection — a frozen monotonic clock can't see a suspend) and ``now_mono``
+    (monotonic, for the interaction cooldown).
+    """
+    g = cfg.guard
+    now_wall = time.time() if now_wall is None else now_wall
+    now_mono = time.monotonic() if now_mono is None else now_mono
+    captured: list = []
+
+    # --- resume-from-sleep detection -------------------------------------
+    gap = now_wall - state.last_wall
+    state.last_wall = now_wall
+    if g.capture_on_wake and gap > (g.poll_interval + g.wake_gap_seconds):
+        log.info("Resume from sleep detected (gap %.0fs).", gap)
+        rec = _capture(cfg, "wake")
+        captured.append("wake")
+        if notify:
+            _notify_capture(cfg, "TrustWatch: woke from sleep", rec)
+
+    # --- USB plug/unplug detection ---------------------------------------
+    if g.capture_on_usb_change:
+        current = activity.list_usb_devices()
+        added = current - state.known_usb
+        removed = state.known_usb - current
+        if added or removed:
+            state.known_usb = current
+            detail = []
+            if added:
+                detail.append(f"added: {', '.join(sorted(added))}")
+            if removed:
+                detail.append(f"removed: {', '.join(sorted(removed))}")
+            detail_str = "; ".join(detail)
+            log.info("USB change (%s).", detail_str)
+            rec = _capture(
+                cfg, "usb",
+                note=f"USB change — {detail_str}",
+                extra_fields={
+                    "usb_added": sorted(added),
+                    "usb_removed": sorted(removed),
+                },
+            )
+            captured.append("usb")
+            if notify:
+                _notify_capture(cfg, "TrustWatch: USB device change", rec)
+
+    # --- active-interaction detection ------------------------------------
+    idle = activity.seconds_since_last_input()
+    interacting = idle is not None and idle <= g.interaction_idle_threshold
+    if (
+        g.capture_on_interaction
+        and interacting
+        and (now_mono - state.last_interaction_capture) >= g.interaction_cooldown
+    ):
+        state.last_interaction_capture = now_mono
+        rec = _capture(cfg, "interaction")
+        captured.append("interaction")
+        if notify:
+            _notify_capture(cfg, "TrustWatch: someone is using the laptop", rec)
+
+    # --- lightweight activity timeline -----------------------------------
+    if g.log_activity:
+        win = activity.active_window()
+        if win:
+            sig = f"{win.get('app')}|{win.get('title')}"
+            if sig != state.last_app_title:
+                state.last_app_title = sig
+                log_event(
+                    cfg, "activity",
+                    f"Foreground: {win.get('app') or '?'} — {win.get('title') or ''}".strip(),
+                    extra={"app": win.get("app"), "window_title": win.get("title")},
+                )
+    return captured
 
 
 def guard_loop(cfg: Config, notify: bool = True) -> None:
@@ -190,7 +311,6 @@ def guard_loop(cfg: Config, notify: bool = True) -> None:
     """
     cfg.ensure_dirs()
     g = cfg.guard
-    title = "TrustWatch: activity"
 
     log.info("Guard mode started (poll=%ss). Press Ctrl-C to stop.", g.poll_interval)
     log_event(cfg, "guard_start", "Guard mode started.")
@@ -200,66 +320,14 @@ def guard_loop(cfg: Config, notify: bool = True) -> None:
         if notify:
             _notify_capture(cfg, "TrustWatch: device turned on / guard started", rec)
 
-    known_usb = activity.list_usb_devices() if g.capture_on_usb_change else set()
-    last_interaction_capture = 0.0
-    last_app_title: Optional[str] = None
-    last_wall = time.time()
-
+    state = _GuardState(cfg)
     try:
         while True:
             time.sleep(g.poll_interval)
-            now_mono = time.monotonic()
-            now_wall = time.time()
-
-            # --- resume-from-sleep detection ---------------------------------
-            gap = now_wall - last_wall
-            last_wall = now_wall
-            if g.capture_on_wake and gap > (g.poll_interval + g.wake_gap_seconds):
-                log.info("Resume from sleep detected (gap %.0fs).", gap)
-                rec = _capture(cfg, "wake")
-                if notify:
-                    _notify_capture(cfg, "TrustWatch: woke from sleep", rec)
-
-            # --- USB plug/unplug detection -----------------------------------
-            if g.capture_on_usb_change:
-                current = activity.list_usb_devices()
-                added = current - known_usb
-                removed = known_usb - current
-                if added or removed:
-                    known_usb = current
-                    detail = []
-                    if added:
-                        detail.append(f"added: {', '.join(sorted(added))}")
-                    if removed:
-                        detail.append(f"removed: {', '.join(sorted(removed))}")
-                    log.info("USB change (%s).", "; ".join(detail))
-                    rec = _capture(cfg, "usb")
-                    rec["message"] += " USB change — " + "; ".join(detail)
-                    if notify:
-                        _notify_capture(cfg, "TrustWatch: USB device change", rec)
-
-            # --- active-interaction detection --------------------------------
-            idle = activity.seconds_since_last_input()
-            interacting = idle is not None and idle <= g.interaction_idle_threshold
-            if g.capture_on_interaction and interacting:
-                if (now_mono - last_interaction_capture) >= g.interaction_cooldown:
-                    last_interaction_capture = now_mono
-                    rec = _capture(cfg, "interaction")
-                    if notify:
-                        _notify_capture(cfg, "TrustWatch: someone is using the laptop", rec)
-
-            # --- lightweight activity timeline -------------------------------
-            if g.log_activity:
-                win = activity.active_window()
-                if win:
-                    sig = f"{win.get('app')}|{win.get('title')}"
-                    if sig != last_app_title:
-                        last_app_title = sig
-                        log_event(
-                            cfg, "activity",
-                            f"Foreground: {win.get('app') or '?'} — {win.get('title') or ''}".strip(),
-                            extra={"app": win.get("app"), "window_title": win.get("title")},
-                        )
+            try:
+                _guard_tick(cfg, state, notify=notify)
+            except Exception as exc:  # noqa: BLE001 - one bad tick must not stop guard
+                log.warning("Guard iteration failed (continuing): %s", exc)
     except KeyboardInterrupt:
         log.info("Stopping guard mode.")
         log_event(cfg, "guard_stop", "Guard mode stopped.")

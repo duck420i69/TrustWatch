@@ -20,10 +20,21 @@ def timestamp_slug(dt: Optional[datetime] = None) -> str:
 
 
 def snapshot_path(cfg: Config, kind: str, dt: Optional[datetime] = None) -> Path:
-    """Return a unique snapshot path like snapshots/20260101-091500_login.jpg."""
+    """Return a unique snapshot path like snapshots/20260101-091500_login.jpg.
+
+    If a file with the computed name already exists (two captures of the same
+    kind within one second), a numeric suffix is appended so nothing is
+    overwritten.
+    """
     cfg.ensure_dirs()
     safe_kind = "".join(c for c in kind if c.isalnum() or c in "-_") or "event"
-    return cfg.snapshot_dir / f"{timestamp_slug(dt)}_{safe_kind}.jpg"
+    base = f"{timestamp_slug(dt)}_{safe_kind}"
+    path = cfg.snapshot_dir / f"{base}.jpg"
+    counter = 1
+    while path.exists():
+        path = cfg.snapshot_dir / f"{base}-{counter}.jpg"
+        counter += 1
+    return path
 
 
 def log_event(

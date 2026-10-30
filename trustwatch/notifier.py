@@ -19,6 +19,19 @@ from .config import NotifierConfig
 log = logging.getLogger("trustwatch.notifier")
 
 
+def _scrub(text: str, *secrets: str) -> str:
+    """Replace any non-empty secret substrings in `text` with a placeholder.
+
+    Telegram embeds the bot token in the request URL and a webhook URL may hold
+    a secret path, so the URL inside a requests exception would otherwise land
+    the credential in the logs.
+    """
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    return text
+
+
 class Notifier:
     def __init__(self, cfg: NotifierConfig):
         self.cfg = cfg
@@ -71,21 +84,25 @@ class Notifier:
         chat_id = self.cfg.telegram_chat_id
         caption = f"{title}\n{body}"
 
-        if image_path and Path(image_path).exists():
-            url = f"https://api.telegram.org/bot{token}/sendPhoto"
-            with open(image_path, "rb") as fh:
+        try:
+            if image_path and Path(image_path).exists():
+                url = f"https://api.telegram.org/bot{token}/sendPhoto"
+                with open(image_path, "rb") as fh:
+                    resp = requests.post(
+                        url,
+                        data={"chat_id": chat_id, "caption": caption},
+                        files={"photo": fh},
+                        timeout=20,
+                    )
+            else:
+                url = f"https://api.telegram.org/bot{token}/sendMessage"
                 resp = requests.post(
-                    url,
-                    data={"chat_id": chat_id, "caption": caption},
-                    files={"photo": fh},
-                    timeout=20,
+                    url, data={"chat_id": chat_id, "text": caption}, timeout=20
                 )
-        else:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            resp = requests.post(
-                url, data={"chat_id": chat_id, "text": caption}, timeout=20
-            )
-        resp.raise_for_status()
+            resp.raise_for_status()
+        except Exception as exc:
+            # The token lives in the URL, which requests puts in the error text.
+            raise RuntimeError(_scrub(str(exc), token)) from None
 
     def _email(self, title: str, body: str, image_path: Optional[Path]) -> None:
         msg = EmailMessage()
@@ -111,14 +128,18 @@ class Notifier:
         import requests  # type: ignore
 
         payload = {"title": title, "body": body, "text": f"{title}: {body}"}
-        if image_path and Path(image_path).exists():
-            with open(image_path, "rb") as fh:
-                resp = requests.post(
-                    self.cfg.webhook_url,
-                    data=payload,
-                    files={"image": (Path(image_path).name, fh, "image/jpeg")},
-                    timeout=20,
-                )
-        else:
-            resp = requests.post(self.cfg.webhook_url, json=payload, timeout=20)
-        resp.raise_for_status()
+        try:
+            if image_path and Path(image_path).exists():
+                with open(image_path, "rb") as fh:
+                    resp = requests.post(
+                        self.cfg.webhook_url,
+                        data=payload,
+                        files={"image": (Path(image_path).name, fh, "image/jpeg")},
+                        timeout=20,
+                    )
+            else:
+                resp = requests.post(self.cfg.webhook_url, json=payload, timeout=20)
+            resp.raise_for_status()
+        except Exception as exc:
+            # A webhook URL can carry a secret path/token; keep it out of logs.
+            raise RuntimeError(_scrub(str(exc), self.cfg.webhook_url)) from None

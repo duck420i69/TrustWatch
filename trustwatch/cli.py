@@ -115,7 +115,10 @@ def main(argv=None) -> int:
             return 0
         for ev in events:
             img = f"  [{ev['image']}]" if ev.get("image") else ""
-            print(f"{ev['time']}  {ev['kind']:<12} {ev['message']}{img}")
+            when = ev.get("time", "?")
+            kind = ev.get("kind", "?")
+            msg = ev.get("message", "")
+            print(f"{when}  {kind:<12} {msg}{img}")
         return 0
 
     if args.command == "test-notify":
@@ -127,7 +130,9 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "show-config":
-        print(json.dumps(cfg.to_dict(), indent=2))
+        # Redacted so secrets (token, SMTP password, webhook URL) aren't leaked
+        # when the output is pasted into a bug report.
+        print(json.dumps(cfg.to_redacted_dict(), indent=2))
         return 0
 
     parser.error("Unknown command")

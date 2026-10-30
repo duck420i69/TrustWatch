@@ -102,6 +102,22 @@ class Config:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    # Fields that hold credentials and must never be printed verbatim.
+    _SECRET_FIELDS = ("telegram_token", "smtp_password", "webhook_url")
+
+    def to_redacted_dict(self) -> Dict[str, Any]:
+        """Like :meth:`to_dict`, but with secret values masked.
+
+        Used by ``show-config`` so pasting its output can't leak a bot token,
+        SMTP password, or webhook URL.
+        """
+        data = self.to_dict()
+        notifier = data.get("notifier", {})
+        for key in self._SECRET_FIELDS:
+            if notifier.get(key):
+                notifier[key] = "***set (hidden)***"
+        return data
+
 
 def _load_raw(path: Path) -> Dict[str, Any]:
     text = path.read_text(encoding="utf-8")
