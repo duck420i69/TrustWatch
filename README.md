@@ -48,39 +48,49 @@ You're responsible for complying with the laws that apply to you.
 
 ## Install
 
+TrustWatch is managed with [uv](https://docs.astral.sh/uv/). Install uv first
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`, or on Windows
+`powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`), then:
+
 ```bash
-git clone <your-repo-url> TrustWatch
+git clone https://github.com/duck420i69/TrustWatch.git
 cd TrustWatch
-python3 -m venv .venv && source .venv/bin/activate   # recommended
-pip install -r requirements.txt
-pip install -e .                                      # gives you the `trustwatch` command
+uv sync            # creates .venv and installs the project + dev tools
 ```
 
-Requires Python 3.9+ and a webcam. `opencv-python` pulls in everything needed
-for capture and motion detection.
+That's it — `uv sync` reads `pyproject.toml`/`uv.lock`, picks a suitable Python
+(3.9+), and installs everything. Run the CLI with `uv run trustwatch ...` (or
+activate the venv: `.venv/bin/trustwatch`, or `.venv\Scripts\trustwatch.exe` on
+Windows). A webcam is needed for capture; `mss`/`opencv-python` are installed
+for you.
+
+Some activity signals on **Linux/X11** rely on small OS tools rather than Python
+packages — install them if you want idle-time and active-window detection in
+guard mode: `sudo apt install xprintidle xdotool`. macOS and Windows use
+built-in facilities (no extra install).
 
 ## Quick start
 
 ```bash
 # 1. Copy the example config and (optionally) add your alert channel.
-cp config.example.json ~/.trustwatch/config.json   # mkdir -p ~/.trustwatch first
+mkdir -p ~/.trustwatch && cp config.example.json ~/.trustwatch/config.json
 
 # 2. Prove the camera + notifications work.
-trustwatch --config ~/.trustwatch/config.json snap          # take one photo now
-trustwatch --config ~/.trustwatch/config.json test-notify   # fire a test alert
+uv run trustwatch --config ~/.trustwatch/config.json snap          # take one photo now
+uv run trustwatch --config ~/.trustwatch/config.json test-notify   # fire a test alert
 
 # 3. Run the persistent guard (captures on turn-on, wake, interaction, USB).
-trustwatch --config ~/.trustwatch/config.json guard
+uv run trustwatch --config ~/.trustwatch/config.json guard
 
 #    ...or the motion-detecting security camera (Ctrl-C to stop either).
-trustwatch --config ~/.trustwatch/config.json camera
+uv run trustwatch --config ~/.trustwatch/config.json camera
 
 # 4. Review what happened.
-trustwatch --config ~/.trustwatch/config.json log -n 20
+uv run trustwatch --config ~/.trustwatch/config.json log -n 20
 ```
 
 If you don't pass `--config`, built-in defaults are used (desktop notifications
-only, data in `~/.trustwatch`).
+only, data in `~/.trustwatch`). To run the tests: `uv run pytest`.
 
 ## Commands
 

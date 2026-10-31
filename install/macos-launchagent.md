@@ -3,10 +3,11 @@
 macOS runs a LaunchAgent for your user. This one fires `trustwatch snap` every
 time you log in and whenever the Mac wakes/unlocks.
 
-1. Find your install path and config:
+1. Find your install path and config. With uv, after `uv sync` the executable
+   lives in the project's virtual environment:
 
    ```bash
-   which trustwatch      # e.g. /Users/you/.venv/bin/trustwatch
+   echo "$(pwd)/.venv/bin/trustwatch"   # e.g. /Users/you/repos/TrustWatch/.venv/bin/trustwatch
    ```
 
 2. Create `~/Library/LaunchAgents/com.trustwatch.snap.plist` with this content,

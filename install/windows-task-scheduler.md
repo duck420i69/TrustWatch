@@ -2,11 +2,16 @@
 
 Use Task Scheduler to fire `trustwatch snap` at logon and at workstation unlock.
 
-1. Find your executable:
+1. Find your executable. With uv, after `uv sync` in your clone it lives in the
+   project's virtual environment, e.g.
+   `E:\repos\Python\TrustWatch\.venv\Scripts\trustwatch.exe`:
 
    ```powershell
-   where.exe trustwatch
+   Get-Command .\.venv\Scripts\trustwatch.exe | Select-Object -ExpandProperty Source
    ```
+
+   (Use that full `.exe` path below. Alternatively set the action to run
+   `uv` with arguments `run --project E:\repos\Python\TrustWatch trustwatch ...`.)
 
 2. Open **Task Scheduler** → **Create Task** (not "Basic Task").
 

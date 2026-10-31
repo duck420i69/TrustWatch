@@ -67,8 +67,11 @@ def _capture_with_mss(
     max_width: int,
 ) -> pathlib.Path:
     """Capture using the ``mss`` backend, preferring Pillow for save/scale."""
+    # mss >= 10 renamed the factory to `mss.MSS`; older versions only have
+    # `mss.mss`. Prefer the new name and fall back for compatibility.
+    mss_factory = getattr(mss, "MSS", None) or mss.mss
     try:
-        with mss.mss() as sct:
+        with mss_factory() as sct:
             monitors = sct.monitors
             # sct.monitors[0] is the full virtual desktop; 1..N are displays.
             if monitor < 0 or monitor >= len(monitors):

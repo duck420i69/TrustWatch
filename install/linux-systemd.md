@@ -1,6 +1,8 @@
 # Run TrustWatch on login / unlock — Linux
 
-Two options depending on what you want to trigger on.
+Two options depending on what you want to trigger on. With uv, after `uv sync`
+the `trustwatch` executable lives at `<your-clone>/.venv/bin/trustwatch` — use
+that full path for `ExecStart` below (or run `uv run --project <clone> trustwatch`).
 
 ## A. Snapshot on graphical login (systemd user service)
 
